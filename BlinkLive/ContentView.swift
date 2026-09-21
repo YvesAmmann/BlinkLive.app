@@ -8,19 +8,10 @@ struct ContentView: View {
       BlinkTheme.background
         .ignoresSafeArea()
 
-      LinearGradient(
-        colors: [BlinkTheme.fuchsia, BlinkTheme.cyan, BlinkTheme.blue],
-        startPoint: .leading,
-        endPoint: .trailing
-      )
-      .frame(height: 5)
-      .ignoresSafeArea(edges: .top)
-
       ScrollView {
         VStack(alignment: .leading, spacing: 24) {
           header
           phaseContent
-          disclaimer
         }
         .frame(maxWidth: 620, alignment: .leading)
         .padding(.horizontal, 20)
@@ -276,16 +267,6 @@ struct ContentView: View {
     .panelStyle(highlight: BlinkTheme.fuchsia)
   }
 
-  private var disclaimer: some View {
-    Label(
-      "BlinkLive verwendet eine inoffizielle Blink-Schnittstelle. Änderungen am Dienst können die Funktion beeinträchtigen.",
-      systemImage: "info.circle"
-    )
-    .font(.caption)
-    .foregroundStyle(.secondary)
-    .padding(.horizontal, 4)
-  }
-
   private func verificationMessage(channel: String?) -> String {
     switch channel?.lowercased() {
     case "sms", "phone":
@@ -373,18 +354,24 @@ private struct PrimaryButton: View {
 
 extension View {
   fileprivate func panelStyle(highlight: Color = BlinkTheme.blue) -> some View {
-    self
+    let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+
+    return
+      self
       .padding(20)
-      .background(BlinkTheme.surface, in: RoundedRectangle(cornerRadius: 8))
-      .overlay(alignment: .leading) {
-        Rectangle()
-          .fill(highlight)
-          .frame(width: 4)
-          .clipShape(UnevenRoundedRectangle(topLeadingRadius: 8, bottomLeadingRadius: 8))
+      .background {
+        shape
+          .fill(BlinkTheme.surface)
+          .overlay(alignment: .leading) {
+            Rectangle()
+              .fill(highlight)
+              .frame(width: 4)
+          }
+          .clipShape(shape)
       }
       .overlay {
-        RoundedRectangle(cornerRadius: 8)
-          .stroke(BlinkTheme.border, lineWidth: 1)
+        shape
+          .strokeBorder(BlinkTheme.border, lineWidth: 1)
       }
   }
 
