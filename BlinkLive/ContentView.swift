@@ -30,11 +30,12 @@ struct ContentView: View {
 
   private var header: some View {
     HStack(spacing: 14) {
-      Image(systemName: "video.fill")
-        .font(.system(size: 22, weight: .semibold))
-        .foregroundStyle(.white)
+      Image("HeaderIcon")
+        .resizable()
+        .scaledToFill()
         .frame(width: 46, height: 46)
-        .background(BlinkTheme.blue, in: RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .accessibilityHidden(true)
 
       VStack(alignment: .leading, spacing: 2) {
         Text("BlinkLive")

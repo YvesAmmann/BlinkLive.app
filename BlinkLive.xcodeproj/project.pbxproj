@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A11E8A7C61D24036A0010001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A11E8A7C61D24036A0010002 /* Assets.xcassets */; };
 		5EB96824F92E8025412FD746 /* BlinkLiveApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ABAA7DB6A7AE238BA289CE4 /* BlinkLiveApp.swift */; };
 		615E579C92F7B5726DCDC251 /* AppPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3FD65A200852195AC70AC34 /* AppPreferences.swift */; };
 		64832D3313E5075EC6463694 /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79C3E74166A001DFF8C8351C /* AppViewModel.swift */; };
@@ -36,6 +37,7 @@
 		6B6213FB18854B71A9525A6E /* BlinkTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkTheme.swift; sourceTree = "<group>"; };
 		79C3E74166A001DFF8C8351C /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
 		8ABAA7DB6A7AE238BA289CE4 /* BlinkLiveApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlinkLiveApp.swift; sourceTree = "<group>"; };
+		A11E8A7C61D24036A0010002 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B3FD65A200852195AC70AC34 /* AppPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPreferences.swift; sourceTree = "<group>"; };
 		BF7C2BD3EE9B577F8094FF42 /* KeychainCredentialsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainCredentialsStore.swift; sourceTree = "<group>"; };
 		FC7FB781723EF36A515B8500 /* BlinkLive.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BlinkLive.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -74,6 +76,7 @@
 			children = (
 				B3FD65A200852195AC70AC34 /* AppPreferences.swift */,
 				79C3E74166A001DFF8C8351C /* AppViewModel.swift */,
+				A11E8A7C61D24036A0010002 /* Assets.xcassets */,
 				25F0C3835CC5D87ADF55B9D4 /* BlinkAPIClient.swift */,
 				8ABAA7DB6A7AE238BA289CE4 /* BlinkLiveApp.swift */,
 				FE6DA87E6E51E0C0D799444D /* BlinkModels.swift */,
@@ -110,6 +113,7 @@
 			buildConfigurationList = 5CA33CBD8302E2EFF4E49488 /* Build configuration list for PBXNativeTarget "BlinkLive" */;
 			buildPhases = (
 				903A3C7D450E63855C1E4B15 /* Sources */,
+				A11E8A7C61D24036A0010003 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -150,6 +154,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A11E8A7C61D24036A0010003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A11E8A7C61D24036A0010001 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		2848BD2291FE8F1EECC37514 /* Sources */ = {
@@ -224,6 +239,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Manual;
 				DEVELOPMENT_TEAM = "";
@@ -250,6 +266,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Manual;
 				DEVELOPMENT_TEAM = "";
