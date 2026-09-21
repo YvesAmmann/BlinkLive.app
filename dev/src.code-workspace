@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "../BlinkLive"
+		}
+	],
+	"settings": {
+		"files.exclude": {
+			"dev": true,
+			"*.xcodeproj": true
+		},
+		"sweetpad.build.xcodeWorkspacePath": "../../BlinkLive.xcworkspace",
+		"sweetpad.build.scheme": "BlinkLive",
+		"sweetpad.cliServer.enabled": true,
+		"sweetpad.build.destination": {
+			"id": "iosdevice-00008150-000131E90A8A401C",
+			"type": "iOSDevice"
+		}
+	}
+}
