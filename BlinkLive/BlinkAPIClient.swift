@@ -31,18 +31,22 @@ actor BlinkAPIClient {
     }
 
     let pkce = try makePKCEPair()
-    try await authorize(hardwareID: hardwareID, codeChallenge: pkce.challenge)
+    let authorizationURL = try makeAuthorizationURL(
+      hardwareID: hardwareID, codeChallenge: pkce.challenge)
+    try await authorize(url: authorizationURL)
     let csrfToken = try await fetchCSRFToken()
     let outcome = try await signIn(credentials: credentials, csrfToken: csrfToken)
 
     switch outcome {
     case .authenticated:
-      return try await completeOAuth(codeVerifier: pkce.verifier, hardwareID: hardwareID)
+      return try await completeOAuth(
+        authorizationURL: authorizationURL, codeVerifier: pkce.verifier, hardwareID: hardwareID)
     case .verificationRequired(let channel):
       pendingOAuth = PendingOAuth(
         csrfToken: csrfToken,
         codeVerifier: pkce.verifier,
-        hardwareID: hardwareID
+        hardwareID: hardwareID,
+        authorizationURL: authorizationURL
       )
       throw BlinkAPIError.verificationRequired(channel: channel)
     }
@@ -77,6 +81,7 @@ actor BlinkAPIClient {
     }
 
     let session = try await completeOAuth(
+      authorizationURL: pendingOAuth.authorizationURL,
       codeVerifier: pendingOAuth.codeVerifier,
       hardwareID: pendingOAuth.hardwareID
     )
@@ -108,7 +113,7 @@ actor BlinkAPIClient {
     return try await makeSession(token: token, fallbackRefreshToken: refreshToken)
   }
 
-  private func authorize(hardwareID: String, codeChallenge: String) async throws {
+  private func makeAuthorizationURL(hardwareID: String, codeChallenge: String) throws -> URL {
     var components = URLComponents(
       url: endpoint(baseURL: oauthBaseURL, path: "/oauth/v2/authorize"),
       resolvingAgainstBaseURL: false
@@ -131,7 +136,10 @@ actor BlinkAPIClient {
     guard let url = components?.url else {
       throw BlinkAPIError.invalidResponse
     }
+    return url
+  }
 
+  private func authorize(url: URL) async throws {
     var request = URLRequest(url: url)
     applyBrowserHeaders(to: &request, acceptsHTML: true)
     let (data, response) = try await perform(request)
@@ -183,9 +191,10 @@ actor BlinkAPIClient {
     throw serverError(response: response, data: data)
   }
 
-  private func completeOAuth(codeVerifier: String, hardwareID: String) async throws -> BlinkSession
-  {
-    let code = try await fetchAuthorizationCode()
+  private func completeOAuth(
+    authorizationURL: URL, codeVerifier: String, hardwareID: String
+  ) async throws -> BlinkSession {
+    let code = try await fetchAuthorizationCode(url: authorizationURL)
     var request = formRequest(
       url: endpoint(baseURL: oauthBaseURL, path: "/oauth/token"),
       fields: [
@@ -205,8 +214,8 @@ actor BlinkAPIClient {
     return try await makeSession(token: token, fallbackRefreshToken: nil)
   }
 
-  private func fetchAuthorizationCode() async throws -> String {
-    var request = URLRequest(url: endpoint(baseURL: oauthBaseURL, path: "/oauth/v2/authorize"))
+  private func fetchAuthorizationCode(url: URL) async throws -> String {
+    var request = URLRequest(url: url)
     applyBrowserHeaders(to: &request)
 
     let (data, response) = try await perform(request, followsRedirects: false)
@@ -423,6 +432,7 @@ private struct PendingOAuth: Sendable {
   let csrfToken: String
   let codeVerifier: String
   let hardwareID: String
+  let authorizationURL: URL
 }
 
 private enum SignInOutcome {

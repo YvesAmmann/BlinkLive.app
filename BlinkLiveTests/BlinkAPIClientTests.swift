@@ -8,55 +8,73 @@ final class BlinkAPIClientTests: XCTestCase {
     super.tearDown()
   }
 
-  func testLoginUsesDocumentedPayloadAndRegionalTier() async throws {
+  func testLoginReusesAuthorizationURLAndRegionalTier() async throws {
+    var firstAuthorizationURL: URL?
     URLProtocolStub.handler = { request in
-      XCTAssertEqual(
-        request.url?.absoluteString, "https://rest-prod.immedia-semi.com/api/v5/account/login")
-      XCTAssertEqual(request.httpMethod, "POST")
-      XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
-
-      let body = try Self.bodyData(from: request)
-      let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
-      XCTAssertEqual(json["email"], "test@example.com")
-      XCTAssertEqual(json["password"], "secret")
-      XCTAssertEqual(json["unique_id"], "BLINKLIVE_TEST-ID")
-      XCTAssertEqual(json["client_name"], "BlinkLive")
-      XCTAssertEqual(json["reauth"], "true")
-
-      return Self.response(
-        for: request,
-        json: """
-          {
-            "account": {
-              "account_id": 12,
-              "client_id": 34,
-              "tier": "e002",
-              "client_verification_required": false,
-              "verification_channel": "email"
-            },
-            "auth": { "token": "token-123" }
-          }
-          """
-      )
+      switch (request.url?.path, request.httpMethod) {
+      case ("/oauth/v2/authorize", "GET"):
+        if let firstAuthorizationURL {
+          XCTAssertEqual(request.url, firstAuthorizationURL)
+          return Self.response(
+            for: request, statusCode: 302,
+            headers: [
+              "Location": "immedia-blink://applinks.blink.com/signin/callback?code=auth-code"
+            ])
+        }
+        firstAuthorizationURL = request.url
+        let items = try XCTUnwrap(
+          URLComponents(url: XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems)
+        let query = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        XCTAssertEqual(query["client_id"], "ios")
+        XCTAssertEqual(query["response_type"], "code")
+        XCTAssertEqual(query["code_challenge_method"], "S256")
+        XCTAssertFalse(try XCTUnwrap(query["code_challenge"]).isEmpty)
+        XCTAssertEqual(query["hardware_id"], "00000000-0000-0000-0000-000000000001")
+        return Self.response(for: request, json: "{}")
+      case ("/oauth/v2/signin", "GET"):
+        return Self.response(
+          for: request,
+          body:
+            #"<script id="oauth-args" type="application/json">{"csrf-token":"csrf-123"}</script>"#)
+      case ("/oauth/v2/signin", "POST"):
+        let fields = try Self.formFields(from: request)
+        XCTAssertEqual(fields["username"], "test@example.com")
+        XCTAssertEqual(fields["password"], "secret")
+        XCTAssertEqual(fields["csrf-token"], "csrf-123")
+        return Self.response(for: request, statusCode: 302)
+      case ("/oauth/token", "POST"):
+        let fields = try Self.formFields(from: request)
+        XCTAssertEqual(fields["code"], "auth-code")
+        XCTAssertEqual(fields["grant_type"], "authorization_code")
+        XCTAssertFalse(try XCTUnwrap(fields["code_verifier"]).isEmpty)
+        return Self.response(
+          for: request, json: #"{"access_token":"token-123","refresh_token":"refresh-123"}"#)
+      case ("/api/v1/users/tier_info", "GET"):
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-123")
+        return Self.response(for: request, json: #"{"account_id":12,"tier":"e002"}"#)
+      default:
+        XCTFail("Unexpected request: \(request)")
+        throw URLError(.badURL)
+      }
     }
 
     let client = BlinkAPIClient(configuration: stubConfiguration())
     let result = try await client.login(
       credentials: BlinkCredentials(email: "test@example.com", password: "secret"),
-      uniqueID: "BLINKLIVE_TEST-ID"
+      uniqueID: "00000000-0000-0000-0000-000000000001"
     )
 
+    XCTAssertNotNil(firstAuthorizationURL)
     XCTAssertEqual(result.accountID, 12)
-    XCTAssertEqual(result.clientID, 34)
     XCTAssertEqual(result.baseURL.absoluteString, "https://rest-e002.immedia-semi.com")
     XCTAssertEqual(result.token, "token-123")
-    XCTAssertFalse(result.verificationRequired)
+    XCTAssertEqual(result.refreshToken, "refresh-123")
   }
 
   func testHomeScreenUsesTokenAndDecodesCameras() async throws {
     URLProtocolStub.handler = { request in
       XCTAssertEqual(request.url?.path, "/api/v3/accounts/12/homescreen")
-      XCTAssertEqual(request.value(forHTTPHeaderField: "TOKEN-AUTH"), "token-123")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-123")
 
       return Self.response(
         for: request,
@@ -77,29 +95,63 @@ final class BlinkAPIClientTests: XCTestCase {
       cameras, [BlinkCamera(id: 99, name: "Garten", networkID: 45, status: "done", battery: "ok")])
   }
 
-  func testPINVerificationUsesAccountAndClient() async throws {
+  func testPINVerificationCompletesOAuth() async throws {
+    var firstAuthorizationURL: URL?
     URLProtocolStub.handler = { request in
-      XCTAssertEqual(request.url?.path, "/api/v4/account/12/client/34/pin/verify")
-      XCTAssertEqual(request.httpMethod, "POST")
-      XCTAssertEqual(request.value(forHTTPHeaderField: "TOKEN-AUTH"), "token-123")
-
-      let body = try Self.bodyData(from: request)
-      let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: String])
-      XCTAssertEqual(json["pin"], "123456")
-      return Self.response(for: request, json: #"{ "valid": true }"#)
+      switch (request.url?.path, request.httpMethod) {
+      case ("/oauth/v2/authorize", "GET"):
+        if let firstAuthorizationURL {
+          XCTAssertEqual(request.url, firstAuthorizationURL)
+          return Self.response(
+            for: request, statusCode: 302,
+            headers: [
+              "Location": "immedia-blink://applinks.blink.com/signin/callback?code=pin-code"
+            ])
+        }
+        firstAuthorizationURL = request.url
+        return Self.response(for: request, json: "{}")
+      case ("/oauth/v2/signin", "GET"):
+        return Self.response(
+          for: request,
+          body:
+            #"<script id="oauth-args" type="application/json">{"csrf-token":"csrf-123"}</script>"#)
+      case ("/oauth/v2/signin", "POST"):
+        return Self.response(for: request, statusCode: 412, body: #"{"tsv_methods":["email"]}"#)
+      case ("/oauth/v2/2fa/verify", "POST"):
+        let fields = try Self.formFields(from: request)
+        XCTAssertEqual(fields["2fa_code"], "123456")
+        XCTAssertEqual(fields["csrf-token"], "csrf-123")
+        return Self.response(for: request, statusCode: 201, body: #"{"status":"auth-completed"}"#)
+      case ("/oauth/token", "POST"):
+        XCTAssertEqual(try Self.formFields(from: request)["code"], "pin-code")
+        return Self.response(for: request, json: #"{"access_token":"token-123"}"#)
+      case ("/api/v1/users/tier_info", "GET"):
+        return Self.response(for: request, json: #"{"account_id":12,"tier":"e002"}"#)
+      default:
+        XCTFail("Unexpected request: \(request)")
+        throw URLError(.badURL)
+      }
     }
 
     let client = BlinkAPIClient(configuration: stubConfiguration())
-    let valid = try await client.verify(pin: "123456", session: session())
+    do {
+      _ = try await client.login(
+        credentials: BlinkCredentials(email: "test@example.com", password: "secret"),
+        uniqueID: "00000000-0000-0000-0000-000000000001")
+      XCTFail("Expected PIN verification")
+    } catch BlinkAPIError.verificationRequired(let channel) {
+      XCTAssertEqual(channel, "email")
+    }
+    let result = try await client.verify(pin: "123456")
 
-    XCTAssertTrue(valid)
+    XCTAssertEqual(result?.token, "token-123")
   }
 
   func testRecordUsesSelectedNetworkAndCamera() async throws {
     URLProtocolStub.handler = { request in
       XCTAssertEqual(request.url?.path, "/network/45/camera/99/clip")
       XCTAssertEqual(request.httpMethod, "POST")
-      XCTAssertEqual(request.value(forHTTPHeaderField: "TOKEN-AUTH"), "token-123")
+      XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer token-123")
       return Self.response(for: request, json: #"{ "id": 87654321 }"#)
     }
 
@@ -120,22 +172,37 @@ final class BlinkAPIClientTests: XCTestCase {
   private func session() -> BlinkSession {
     BlinkSession(
       accountID: 12,
-      clientID: 34,
       token: "token-123",
-      baseURL: URL(string: "https://rest-e002.immedia-semi.com")!,
-      verificationRequired: false,
-      verificationChannel: nil
+      refreshToken: nil,
+      baseURL: URL(string: "https://rest-e002.immedia-semi.com")!
     )
   }
 
   private static func response(for request: URLRequest, json: String) -> (HTTPURLResponse, Data) {
+    response(for: request, body: json)
+  }
+
+  private static func response(
+    for request: URLRequest, statusCode: Int = 200, body: String = "",
+    headers: [String: String] = [:]
+  ) -> (HTTPURLResponse, Data) {
     let response = HTTPURLResponse(
       url: request.url!,
-      statusCode: 200,
+      statusCode: statusCode,
       httpVersion: nil,
-      headerFields: ["Content-Type": "application/json"]
+      headerFields: headers
     )!
-    return (response, Data(json.utf8))
+    return (response, Data(body.utf8))
+  }
+
+  private static func formFields(from request: URLRequest) throws -> [String: String] {
+    let body = try bodyData(from: request)
+    var components = URLComponents()
+    components.percentEncodedQuery = String(data: body, encoding: .utf8)
+    return Dictionary(
+      uniqueKeysWithValues: (components.queryItems ?? []).map {
+        ($0.name, $0.value ?? "")
+      })
   }
 
   private static func bodyData(from request: URLRequest) throws -> Data {
