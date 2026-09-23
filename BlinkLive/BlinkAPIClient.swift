@@ -38,9 +38,9 @@ actor BlinkAPIClient {
     let outcome = try await signIn(credentials: credentials, csrfToken: csrfToken)
 
     switch outcome {
-    case .authenticated:
+    case .authenticated(let redirectURL):
       return try await completeOAuth(
-        authorizationURL: authorizationURL, codeVerifier: pkce.verifier, hardwareID: hardwareID)
+        authorizationURL: redirectURL, codeVerifier: pkce.verifier, hardwareID: hardwareID)
     case .verificationRequired(let channel):
       pendingOAuth = PendingOAuth(
         csrfToken: csrfToken,
@@ -179,7 +179,12 @@ actor BlinkAPIClient {
 
     let (data, response) = try await perform(request, followsRedirects: false)
     if 300..<400 ~= response.statusCode {
-      return .authenticated
+      guard let location = response.value(forHTTPHeaderField: "Location"),
+        let redirectURL = URL(string: location, relativeTo: response.url)?.absoluteURL
+      else {
+        throw BlinkAPIError.invalidResponse
+      }
+      return .authenticated(redirectURL)
     }
     let verification = verificationDetails(from: data)
     if response.statusCode == 412 {
@@ -215,18 +220,32 @@ actor BlinkAPIClient {
   }
 
   private func fetchAuthorizationCode(url: URL) async throws -> String {
-    var request = URLRequest(url: url)
-    applyBrowserHeaders(to: &request)
+    var redirectURL = url
+    for _ in 0..<5 {
+      if redirectURL.scheme == "immedia-blink",
+        redirectURL.host == "applinks.blink.com",
+        redirectURL.path == "/signin/callback",
+        let code = URLComponents(url: redirectURL, resolvingAgainstBaseURL: false)?
+          .queryItems?.first(where: { $0.name == "code" })?.value
+      {
+        return code
+      }
+      guard redirectURL.scheme == "https", redirectURL.host == oauthBaseURL.host else {
+        throw BlinkAPIError.invalidResponse
+      }
 
-    let (data, response) = try await perform(request, followsRedirects: false)
-    guard 300..<400 ~= response.statusCode,
-      let location = response.value(forHTTPHeaderField: "Location"),
-      let components = URLComponents(string: location),
-      let code = components.queryItems?.first(where: { $0.name == "code" })?.value
-    else {
-      throw serverError(response: response, data: data)
+      var request = URLRequest(url: redirectURL)
+      applyBrowserHeaders(to: &request)
+      let (data, response) = try await perform(request, followsRedirects: false)
+      guard 300..<400 ~= response.statusCode,
+        let location = response.value(forHTTPHeaderField: "Location"),
+        let nextURL = URL(string: location, relativeTo: response.url)?.absoluteURL
+      else {
+        throw serverError(response: response, data: data)
+      }
+      redirectURL = nextURL
     }
-    return code
+    throw BlinkAPIError.invalidResponse
   }
 
   private func makeSession(
@@ -410,7 +429,10 @@ actor BlinkAPIClient {
 
   private func serverError(response: HTTPURLResponse, data: Data) -> BlinkAPIError {
     let details = try? decoder.decode(ServerErrorResponse.self, from: data)
-    return .server(statusCode: response.statusCode, message: details?.displayMessage)
+    return .server(
+      statusCode: response.statusCode,
+      path: response.url?.path ?? "?",
+      message: details?.displayMessage)
   }
 }
 
@@ -436,7 +458,7 @@ private struct PendingOAuth: Sendable {
 }
 
 private enum SignInOutcome {
-  case authenticated
+  case authenticated(URL)
   case verificationRequired(channel: String?)
 }
 
@@ -502,7 +524,7 @@ enum BlinkAPIError: LocalizedError {
   case invalidResponse
   case verificationRequired(channel: String?)
   case verificationExpired
-  case server(statusCode: Int, message: String?)
+  case server(statusCode: Int, path: String, message: String?)
   case decoding(Error)
 
   var errorDescription: String? {
@@ -515,13 +537,13 @@ enum BlinkAPIError: LocalizedError {
       "Blink verlangt einen Bestätigungscode."
     case .verificationExpired:
       "Die Anmeldung ist abgelaufen. Bitte erneut anmelden."
-    case .server(let statusCode, let message):
+    case .server(let statusCode, let path, let message):
       if statusCode == 401 || statusCode == 403 {
         "Die Anmeldung wurde abgelehnt. Bitte Zugangsdaten und Bestätigung prüfen."
       } else if let message, !message.isEmpty {
-        "Blink meldet: \(message)"
+        "Blink meldet (HTTP \(statusCode), \(path)): \(message)"
       } else {
-        "Der Blink-Dienst hat mit Status \(statusCode) geantwortet."
+        "Der Blink-Dienst hat bei \(path) mit Status \(statusCode) geantwortet."
       }
     case .decoding:
       "Die Blink-Antwort hat ein unbekanntes Format. Die inoffizielle API könnte geändert worden sein."
