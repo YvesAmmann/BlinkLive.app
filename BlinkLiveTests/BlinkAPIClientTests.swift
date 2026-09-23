@@ -30,15 +30,22 @@ final class BlinkAPIClientTests: XCTestCase {
           body:
             #"<script id="oauth-args" type="application/json">{"csrf-token":"csrf-123"}</script>"#)
       case ("/oauth/v2/signin", "POST"):
+        let body = try XCTUnwrap(String(data: Self.bodyData(from: request), encoding: .utf8))
+        XCTAssertTrue(body.contains("username=test%2Btag@example.com"))
+        XCTAssertTrue(body.contains("password=sec%2Bret%2642"))
         let fields = try Self.formFields(from: request)
-        XCTAssertEqual(fields["username"], "test@example.com")
-        XCTAssertEqual(fields["password"], "secret")
+        XCTAssertEqual(fields["username"], "test+tag@example.com")
+        XCTAssertEqual(fields["password"], "sec+ret&42")
         XCTAssertEqual(fields["csrf-token"], "csrf-123")
+        let publicKey = try XCTUnwrap(fields["public_key"])
+        XCTAssertEqual(fields["public_signing_key"], publicKey)
+        XCTAssertEqual(Data(base64Encoded: publicKey)?.count, 32)
+        XCTAssertEqual(Data(base64Encoded: try XCTUnwrap(fields["browser_salt"]))?.count, 16)
         return Self.response(
-          for: request, statusCode: 302,
-          headers: [
-            "Location": "immedia-blink://applinks.blink.com/signin/callback?code=auth-code"
-          ])
+          for: request, statusCode: 201,
+          body:
+            #"{"status":"auth-completed","redirect_url":"immedia-blink://applinks.blink.com/signin/callback?code=auth-code"}"#
+        )
       case ("/oauth/token", "POST"):
         let fields = try Self.formFields(from: request)
         XCTAssertEqual(fields["code"], "auth-code")
@@ -57,7 +64,7 @@ final class BlinkAPIClientTests: XCTestCase {
 
     let client = BlinkAPIClient(configuration: stubConfiguration())
     let result = try await client.login(
-      credentials: BlinkCredentials(email: "test@example.com", password: "secret"),
+      credentials: BlinkCredentials(email: "test+tag@example.com", password: "sec+ret&42"),
       uniqueID: "00000000-0000-0000-0000-000000000001"
     )
 
@@ -113,19 +120,12 @@ final class BlinkAPIClientTests: XCTestCase {
   }
 
   func testPINVerificationCompletesOAuth() async throws {
-    var firstAuthorizationURL: URL?
+    var authorizationRequests = 0
     URLProtocolStub.handler = { request in
       switch (request.url?.path, request.httpMethod) {
       case ("/oauth/v2/authorize", "GET"):
-        if let firstAuthorizationURL {
-          XCTAssertEqual(request.url, firstAuthorizationURL)
-          return Self.response(
-            for: request, statusCode: 302,
-            headers: [
-              "Location": "immedia-blink://applinks.blink.com/signin/callback?code=pin-code"
-            ])
-        }
-        firstAuthorizationURL = request.url
+        authorizationRequests += 1
+        XCTAssertEqual(authorizationRequests, 1)
         return Self.response(for: request, json: "{}")
       case ("/oauth/v2/signin", "GET"):
         return Self.response(
@@ -133,12 +133,19 @@ final class BlinkAPIClientTests: XCTestCase {
           body:
             #"<script id="oauth-args" type="application/json">{"csrf-token":"csrf-123"}</script>"#)
       case ("/oauth/v2/signin", "POST"):
-        return Self.response(for: request, statusCode: 412, body: #"{"tsv_methods":["email"]}"#)
+        return Self.response(
+          for: request, statusCode: 412,
+          body: #"{"tsv_methods":["email"],"tsv_state":"email"}"#)
       case ("/oauth/v2/2fa/verify", "POST"):
         let fields = try Self.formFields(from: request)
         XCTAssertEqual(fields["2fa_code"], "123456")
         XCTAssertEqual(fields["csrf-token"], "csrf-123")
-        return Self.response(for: request, statusCode: 201, body: #"{"status":"auth-completed"}"#)
+        XCTAssertEqual(fields["tsv_state"], "email")
+        return Self.response(
+          for: request, statusCode: 201,
+          body:
+            #"{"status":"auth-completed","redirect_url":"immedia-blink://applinks.blink.com/signin/callback?code=pin-code"}"#
+        )
       case ("/oauth/token", "POST"):
         XCTAssertEqual(try Self.formFields(from: request)["code"], "pin-code")
         return Self.response(for: request, json: #"{"access_token":"token-123"}"#)
@@ -161,6 +168,7 @@ final class BlinkAPIClientTests: XCTestCase {
     }
     let result = try await client.verify(pin: "123456")
 
+    XCTAssertEqual(authorizationRequests, 1)
     XCTAssertEqual(result?.token, "token-123")
   }
 

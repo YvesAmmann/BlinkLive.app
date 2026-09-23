@@ -41,12 +41,13 @@ actor BlinkAPIClient {
     case .authenticated(let redirectURL):
       return try await completeOAuth(
         authorizationURL: redirectURL, codeVerifier: pkce.verifier, hardwareID: hardwareID)
-    case .verificationRequired(let channel):
+    case .verificationRequired(let channel, let state):
       pendingOAuth = PendingOAuth(
         csrfToken: csrfToken,
         codeVerifier: pkce.verifier,
         hardwareID: hardwareID,
-        authorizationURL: authorizationURL
+        authorizationURL: authorizationURL,
+        tsvState: state
       )
       throw BlinkAPIError.verificationRequired(channel: channel)
     }
@@ -57,14 +58,16 @@ actor BlinkAPIClient {
       throw BlinkAPIError.verificationExpired
     }
 
+    var fields = [
+      "2fa_code": pin,
+      "csrf-token": pendingOAuth.csrfToken,
+      "remember_me": "false",
+    ]
+    if let state = pendingOAuth.tsvState {
+      fields["tsv_state"] = state
+    }
     var request = formRequest(
-      url: endpoint(baseURL: oauthBaseURL, path: "/oauth/v2/2fa/verify"),
-      fields: [
-        "2fa_code": pin,
-        "csrf-token": pendingOAuth.csrfToken,
-        "remember_me": "false",
-      ]
-    )
+      url: endpoint(baseURL: oauthBaseURL, path: "/oauth/v2/2fa/verify"), fields: fields)
     applyBrowserHeaders(to: &request)
 
     let (data, response) = try await perform(request)
@@ -81,7 +84,9 @@ actor BlinkAPIClient {
     }
 
     let session = try await completeOAuth(
-      authorizationURL: pendingOAuth.authorizationURL,
+      authorizationURL: verification.redirectURL.flatMap {
+        URL(string: $0, relativeTo: response.url)?.absoluteURL
+      } ?? pendingOAuth.authorizationURL,
       codeVerifier: pendingOAuth.codeVerifier,
       hardwareID: pendingOAuth.hardwareID
     )
@@ -167,17 +172,32 @@ actor BlinkAPIClient {
   private func signIn(credentials: BlinkCredentials, csrfToken: String) async throws
     -> SignInOutcome
   {
+    let publicKey = try randomData(count: 32).base64EncodedString()
+    let browserSalt = try randomData(count: 16).base64EncodedString()
     var request = formRequest(
       url: endpoint(baseURL: oauthBaseURL, path: "/oauth/v2/signin"),
       fields: [
         "username": credentials.email,
         "password": credentials.password,
         "csrf-token": csrfToken,
+        "public_key": publicKey,
+        "public_signing_key": publicKey,
+        "browser_salt": browserSalt,
       ]
     )
     applyBrowserHeaders(to: &request)
 
     let (data, response) = try await perform(request, followsRedirects: false)
+    if response.statusCode == 201 {
+      let result = try decoder.decode(OAuthVerificationResponse.self, from: data)
+      guard result.status == "auth-completed",
+        let location = result.redirectURL,
+        let redirectURL = URL(string: location, relativeTo: response.url)?.absoluteURL
+      else {
+        throw BlinkAPIError.invalidResponse
+      }
+      return .authenticated(redirectURL)
+    }
     if 300..<400 ~= response.statusCode {
       guard let location = response.value(forHTTPHeaderField: "Location"),
         let redirectURL = URL(string: location, relativeTo: response.url)?.absoluteURL
@@ -188,10 +208,10 @@ actor BlinkAPIClient {
     }
     let verification = verificationDetails(from: data)
     if response.statusCode == 412 {
-      return .verificationRequired(channel: verification.channel)
+      return .verificationRequired(channel: verification.channel, state: verification.state)
     }
     if response.statusCode == 202, verification.isRequired {
-      return .verificationRequired(channel: verification.channel)
+      return .verificationRequired(channel: verification.channel, state: verification.state)
     }
     throw serverError(response: response, data: data)
   }
@@ -301,7 +321,9 @@ actor BlinkAPIClient {
 
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
-    request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+    request.httpBody = components.percentEncodedQuery?
+      .replacingOccurrences(of: "+", with: "%2B")
+      .data(using: .utf8)
     request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
     return request
   }
@@ -342,28 +364,34 @@ actor BlinkAPIClient {
     return arguments.csrfToken
   }
 
-  private func verificationDetails(from data: Data) -> (isRequired: Bool, channel: String?) {
+  private func verificationDetails(from data: Data) -> (
+    isRequired: Bool, channel: String?, state: String?
+  ) {
     guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-      return (false, nil)
+      return (false, nil, nil)
     }
+    let state = object["tsv_state"] as? String
     if let methods = object["tsv_methods"] as? [String], let method = methods.first {
-      return (true, method)
+      return (true, method, state)
     }
     if object["tsv_state"] != nil || object["next_time_in_secs"] != nil {
-      return (true, nil)
+      return (true, nil, state)
     }
-    return (false, nil)
+    return (false, nil, nil)
   }
 
   private func makePKCEPair() throws -> (verifier: String, challenge: String) {
-    var bytes = [UInt8](repeating: 0, count: 32)
-    guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
-      throw BlinkAPIError.invalidResponse
-    }
-
-    let verifier = Data(bytes).base64URLEncodedString()
+    let verifier = try randomData(count: 32).base64URLEncodedString()
     let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64URLEncodedString()
     return (verifier, challenge)
+  }
+
+  private func randomData(count: Int) throws -> Data {
+    var bytes = [UInt8](repeating: 0, count: count)
+    guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
+      throw BlinkAPIError.invalidResponse
+    }
+    return Data(bytes)
   }
 
   private func endpoint(baseURL: URL, path: String) -> URL {
@@ -455,11 +483,12 @@ private struct PendingOAuth: Sendable {
   let codeVerifier: String
   let hardwareID: String
   let authorizationURL: URL
+  let tsvState: String?
 }
 
 private enum SignInOutcome {
   case authenticated(URL)
-  case verificationRequired(channel: String?)
+  case verificationRequired(channel: String?, state: String?)
 }
 
 private struct OAuthArguments: Decodable {
@@ -472,6 +501,12 @@ private struct OAuthArguments: Decodable {
 
 private struct OAuthVerificationResponse: Decodable {
   let status: String
+  let redirectURL: String?
+
+  private enum CodingKeys: String, CodingKey {
+    case status
+    case redirectURL = "redirect_url"
+  }
 }
 
 private struct OAuthTokenResponse: Decodable, Sendable {
