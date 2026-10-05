@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
+  @Environment(\.scenePhase) private var scenePhase
   @StateObject private var model = AppViewModel()
 
   var body: some View {
@@ -20,10 +21,14 @@ struct ContentView: View {
         .frame(maxWidth: .infinity)
       }
       .scrollDismissesKeyboard(.interactively)
+      .refreshable {
+        await model.refresh()
+      }
     }
     .fontDesign(.rounded)
-    .task {
-      await model.start()
+    .onChange(of: scenePhase, initial: true) { _, newPhase in
+      guard newPhase == .active else { return }
+      Task { await model.activate() }
     }
     .animation(.snappy(duration: 0.3), value: model.phase.transitionKey)
   }
@@ -40,7 +45,7 @@ struct ContentView: View {
       VStack(alignment: .leading, spacing: 2) {
         Text("BlinkLive")
           .font(.title2.bold())
-        Text("Aufnahme beim App-Start")
+        Text("Aufnahme bei App-Aktivierung")
           .font(.subheadline)
           .foregroundStyle(.secondary)
       }

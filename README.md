@@ -1,8 +1,8 @@
 # BlinkLive
 
 BlinkLive ist eine kleine SwiftUI-App, die nach einmaliger Einrichtung bei jedem
-Kaltstart automatisch einen neuen Videoclip auf einer gewählten Blink-Kamera
-anfordert.
+Kaltstart, bei der Rückkehr in den Vordergrund und beim manuellen Aktualisieren
+einen neuen Videoclip auf einer gewählten Blink-Kamera anfordert.
 
 ## Start
 

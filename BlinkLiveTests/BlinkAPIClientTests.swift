@@ -188,6 +188,51 @@ final class BlinkAPIClientTests: XCTestCase {
     XCTAssertEqual(commandID, 87_654_321)
   }
 
+  @MainActor
+  func testConfiguredAppRecordsOnStartReactivationAndRefresh() async throws {
+    let service = "blink-tests-\(UUID().uuidString)"
+    let store = KeychainCredentialsStore(service: service)
+    defer { try? store.delete() }
+    try store.save(
+      BlinkCredentials(
+        email: "test@example.com", password: "secret", refreshToken: "refresh-123"))
+
+    let suiteName = "blink-tests-\(UUID().uuidString)"
+    let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let preferences = AppPreferences(defaults: defaults)
+    preferences.cameraTarget = CameraTarget(
+      camera: BlinkCamera(id: 99, name: "Garten", networkID: 45, status: nil, battery: nil))
+
+    var recordRequests = 0
+    URLProtocolStub.handler = { request in
+      switch (request.url?.path, request.httpMethod) {
+      case ("/oauth/token", "POST"):
+        return Self.response(
+          for: request, json: #"{"access_token":"token-123","refresh_token":"refresh-123"}"#)
+      case ("/api/v1/users/tier_info", "GET"):
+        return Self.response(for: request, json: #"{"account_id":12,"tier":"e002"}"#)
+      case ("/network/45/camera/99/clip", "POST"):
+        recordRequests += 1
+        return Self.response(for: request, json: #"{"id":87654321}"#)
+      default:
+        XCTFail("Unexpected request: \(request)")
+        throw URLError(.badURL)
+      }
+    }
+
+    let model = AppViewModel(
+      api: BlinkAPIClient(configuration: stubConfiguration()),
+      credentialsStore: store, preferences: preferences)
+
+    await model.activate()
+    XCTAssertEqual(recordRequests, 1)
+    await model.activate()
+    XCTAssertEqual(recordRequests, 2)
+    await model.refresh()
+    XCTAssertEqual(recordRequests, 3)
+  }
+
   private func stubConfiguration() -> URLSessionConfiguration {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [URLProtocolStub.self]

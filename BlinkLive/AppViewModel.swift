@@ -15,6 +15,8 @@ final class AppViewModel: ObservableObject {
   private var activeSession: BlinkSession?
   private var currentCredentials: BlinkCredentials?
   private var didStart = false
+  private var isRefreshing = false
+  private var refreshPending = false
 
   init(
     api: BlinkAPIClient = BlinkAPIClient(),
@@ -30,10 +32,40 @@ final class AppViewModel: ObservableObject {
     preferences.cameraTarget != nil
   }
 
-  func start() async {
-    guard !didStart else { return }
+  func activate() async {
+    guard !didStart else {
+      await refresh()
+      return
+    }
     didStart = true
-    await bootstrap()
+    await runBootstrap()
+  }
+
+  func refresh() async {
+    guard canRefresh else { return }
+    await runBootstrap()
+  }
+
+  private var canRefresh: Bool {
+    guard preferences.cameraTarget != nil else { return false }
+    switch phase {
+    case .credentials, .pin: return false
+    default: return true
+    }
+  }
+
+  private func runBootstrap() async {
+    if isRefreshing {
+      refreshPending = true
+      return
+    }
+
+    isRefreshing = true
+    repeat {
+      refreshPending = false
+      await bootstrap()
+    } while refreshPending && canRefresh
+    isRefreshing = false
   }
 
   func submitCredentials() async {
@@ -117,7 +149,7 @@ final class AppViewModel: ObservableObject {
   }
 
   func retry() async {
-    await bootstrap()
+    await runBootstrap()
   }
 
   func signOut() {

@@ -2,8 +2,12 @@ import Foundation
 import Security
 
 struct KeychainCredentialsStore: Sendable {
-  private let service = "cc.ammann.apps.blinklive"
+  private let service: String
   private let account = "blink-credentials"
+
+  init(service: String = "cc.ammann.apps.blinklive") {
+    self.service = service
+  }
 
   func load() throws -> BlinkCredentials? {
     let query: [String: Any] = [
